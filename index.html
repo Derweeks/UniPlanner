@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UniFlow</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<!-- Firebase compat (non-module so it shares window scope) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyARRvCVpYtLsElY2Cb8zG63g5G_GVDiOcs",
+  authDomain: "uni-planner-derweeks.firebaseapp.com",
+  projectId: "uni-planner-derweeks",
+  storageBucket: "uni-planner-derweeks.firebasestorage.app",
+  messagingSenderId: "106284951721",
+  appId: "1:106284951721:web:93f79a1aba6485347861b8"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db   = firebase.firestore();
+let currentUid = null;
+let saveTimer  = null;
+
+window.signInWithGoogle = function() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).catch(e => alert('Sign in failed: ' + e.message));
+};
+
+window.doSignOut = function() {
+  auth.signOut().then(() => location.reload());
+};
+
+auth.onAuthStateChanged(async function(user) {
+  if (user) {
+    currentUid = user.uid;
+    document.getElementById('welcome-overlay').style.display = 'none';
+    document.getElementById('sb-username').textContent = user.displayName || user.email;
+    document.getElementById('greeting-badge').textContent = (user.displayName || user.email) + ' 💙';
+    document.getElementById('signout-btn').style.display = 'flex';
+    await loadData();
+    renderAll();
+    renderToday();
+    setTodayBanner();
+    setTopbarDate();
+  } else {
+    currentUid = null;
+    document.getElementById('welcome-overlay').style.display = 'flex';
+    document.getElementById('signout-btn').style.display = 'none';
+  }
+});
+
+async function loadData() {
+  try {
+    const snap = await db.collection('users').doc(currentUid).get();
+    if (snap.exists) {
+      const d = snap.data();
+      lectures = d.lectures || [];
+      exams    = d.exams    || [];
+      hws      = d.hws      || [];
+      lessons  = d.lessons  || [];
+      notes    = d.notes    || [];
+      todos    = d.todos    || [];
+    } else {
+      lectures = []; exams = []; hws = [];
+      lessons  = []; notes = []; todos = [];
+    }
+  } catch(e) {
+    console.error('Load error:', e);
+    lectures = []; exams = []; hws = [];
+    lessons  = []; notes = []; todos = [];
+  }
+}
+
+window.sv = function() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(function() {
+    if (!currentUid) return;
+    db.collection('users').doc(currentUid).set({
+      lectures, exams, hws, lessons, notes, todos
+    }).catch(e => console.error('Save error:', e));
+  }, 800);
+};
+</script>
+<style>
+:root{
+  --teal:#0891b2;--teal-dark:#0e6882;--teal-deep:#0c4a6e;
+  --teal-mid:#22d3ee;--teal-light:#a5f3fc;--teal-ghost:#ecfeff;
+  --gold:#d4a843;--gold-light:#f5d98a;
+  --green-dark:#134e3a;--green-mid:#065f46;
+  --cream:#f4f9fb;--white:#ffffff;
+  --ink:#0c1a2e;--muted:#64748b;--border:rgba(8,145,178,0.14);
+  --r:16px;--r-sm:10px;
+  --sh-sm:0 2px 12px rgba(8,145,178,0.10);
+  --sh-md:0 6px 28px rgba(8,145,178,0.16);
+  --sh-lg:0 16px 48px rgba(8,145,178,0.20);
+  --sidebar-w:260px;
+  --diff-1:#6ee7b7;--diff-2:#34d399;--diff-3:#fbbf24;--diff-4:#f97316;--diff-5:#dc2626;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--ink);overflow-x:hidden;}
+
+/* ══ WELCOME ══ */
+#welcome-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,var(--green-dark),var(--teal-dark) 55%,var(--teal-deep));overflow:hidden;}
+#welcome-overlay::before{content:'';position:absolute;width:500px;height:500px;top:-120px;left:-100px;border-radius:50%;background:var(--gold);filter:blur(80px);opacity:.28;animation:bF 9s ease-in-out infinite alternate;}
+#welcome-overlay::after{content:'';position:absolute;width:400px;height:400px;bottom:-80px;right:-60px;border-radius:50%;background:var(--teal-mid);filter:blur(80px);opacity:.28;animation:bF 11s ease-in-out infinite alternate-reverse;}
+@keyframes bF{from{transform:translate(0,0)}to{transform:translate(26px,16px)}}
+.wc{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);backdrop-filter:blur(22px);border-radius:28px;padding:52px 56px;text-align:center;max-width:440px;width:92%;box-shadow:0 28px 70px rgba(0,0,0,.35);animation:cardIn .7s cubic-bezier(.34,1.56,.64,1);position:relative;z-index:2;}
+@keyframes cardIn{from{transform:translateY(50px) scale(.93);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+.wc-icon{font-size:2.4rem;margin-bottom:10px;}
+.wc-title{font-family:'Playfair Display',serif;font-size:2.5rem;font-weight:900;color:white;margin-bottom:4px;}
+.wc-line{width:56px;height:3px;background:linear-gradient(90deg,var(--gold),var(--gold-light));border-radius:2px;margin:12px auto 26px;}
+.wc-wrap{position:relative;margin-bottom:14px;}
+.wc-wrap input{width:100%;padding:14px 20px 14px 48px;border-radius:50px;border:2px solid rgba(255,255,255,.25);background:rgba(255,255,255,.13);color:white;font-family:'DM Sans',sans-serif;font-size:.98rem;font-weight:500;outline:none;transition:all .2s;}
+.wc-wrap input::placeholder{color:rgba(255,255,255,.5);}
+.wc-wrap input:focus{border-color:var(--gold-light);background:rgba(255,255,255,.2);}
+.wc-wrap .wii{position:absolute;left:16px;top:50%;transform:translateY(-50%);font-size:1.05rem;pointer-events:none;}
+.wc-btn{width:100%;padding:14px;background:linear-gradient(135deg,var(--gold),#e8b84b);color:var(--green-dark);font-family:'DM Sans',sans-serif;font-size:.98rem;font-weight:700;border:none;border-radius:50px;cursor:pointer;box-shadow:0 6px 22px rgba(212,168,67,.42);transition:all .2s;}
+.wc-btn:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(212,168,67,.52);}
+
+/* ══ LAYOUT ══ */
+#app{display:flex;min-height:100vh;}
+
+/* ══ SIDEBAR ══ */
+#sidebar{
+  width:var(--sidebar-w);min-height:100vh;
+  background:linear-gradient(175deg,var(--green-dark) 0%,var(--teal-dark) 55%,var(--teal-deep) 100%);
+  display:flex;flex-direction:column;
+  position:fixed;left:0;top:0;bottom:0;z-index:300;
+  transform:translateX(0);transition:transform .3s cubic-bezier(.4,0,.2,1);
+  box-shadow:4px 0 24px rgba(0,0,0,.18);
+}
+#sidebar.closed{transform:translateX(calc(-1 * var(--sidebar-w)));}
+.sb-header{padding:22px 20px 18px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:12px;}
+.sb-logo-icon{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--gold),#e8b84b);display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;box-shadow:0 3px 10px rgba(212,168,67,.38);}
+.sb-logo-text{font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:white;}
+.sb-logo-text span{display:block;font-size:.72rem;font-weight:400;color:var(--gold-light);font-family:'DM Sans',sans-serif;}
+.sb-user{padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);}
+.sb-user-name{color:var(--gold-light);font-size:.85rem;font-weight:600;}
+.sb-user-label{color:rgba(255,255,255,.4);font-size:.72rem;margin-bottom:2px;}
+
+.sb-nav{flex:1;padding:12px 10px;display:flex;flex-direction:column;gap:3px;overflow-y:auto;}
+.sb-item{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:12px;cursor:pointer;transition:all .18s;color:rgba(255,255,255,.65);font-size:.88rem;font-weight:600;border:none;background:none;width:100%;text-align:left;}
+.sb-item:hover{background:rgba(255,255,255,.1);color:white;}
+.sb-item.active{background:rgba(255,255,255,.15);color:white;}
+.sb-item .si{font-size:1.1rem;width:22px;text-align:center;flex-shrink:0;}
+.sb-item .sb-badge{margin-left:auto;background:var(--gold);color:var(--green-dark);border-radius:50px;padding:1px 8px;font-size:.68rem;font-weight:800;}
+.sb-divider{height:1px;background:rgba(255,255,255,.08);margin:8px 10px;}
+
+.sb-footer{padding:14px 20px;border-top:1px solid rgba(255,255,255,.08);}
+.sb-footer-text{color:rgba(255,255,255,.3);font-size:.7rem;}
+
+/* ══ MAIN AREA ══ */
+#main-area{flex:1;margin-left:var(--sidebar-w);transition:margin-left .3s cubic-bezier(.4,0,.2,1);min-height:100vh;display:flex;flex-direction:column;}
+#main-area.expanded{margin-left:0;}
+
+/* ══ TOPBAR ══ */
+#topbar{height:62px;background:white;border-bottom:2px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:16px;position:sticky;top:0;z-index:200;box-shadow:var(--sh-sm);}
+#hamburger{width:36px;height:36px;border:none;background:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;border-radius:8px;transition:background .2s;}
+#hamburger:hover{background:var(--teal-ghost);}
+#hamburger span{display:block;width:20px;height:2px;background:var(--teal-dark);border-radius:2px;transition:all .3s;}
+#hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg);}
+#hamburger.open span:nth-child(2){opacity:0;}
+#hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg);}
+#topbar-title{font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--ink);}
+#topbar-date{margin-left:auto;font-size:.78rem;color:var(--muted);font-weight:500;}
+
+/* ══ OVERLAY WHEN SIDEBAR OPEN ON MOBILE ══ */
+#sb-overlay{display:none;position:fixed;inset:0;z-index:299;background:rgba(0,0,0,.35);}
+
+/* ══ PAGE ══ */
+.page{display:none;flex:1;padding:24px 28px 60px;animation:pgIn .25s ease;}
+.page.active{display:block;}
+@keyframes pgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.ph{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap;gap:12px;}
+.ph-title{font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:700;color:var(--ink);}
+
+/* ══ TODAY PAGE ══ */
+.today-date-banner{background:linear-gradient(135deg,var(--green-dark),var(--teal-dark));border-radius:var(--r);padding:18px 22px;margin-bottom:20px;color:white;}
+.tdb-day{font-family:'Playfair Display',serif;font-size:1.6rem;font-weight:700;}
+.tdb-date{font-size:.82rem;color:var(--gold-light);margin-top:2px;}
+.today-section{margin-bottom:24px;}
+.today-section-title{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:var(--teal-dark);margin-bottom:10px;display:flex;align-items:center;gap:7px;}
+.today-section-title::after{content:'';flex:1;height:1px;background:var(--border);}
+.today-item{background:white;border-radius:12px;padding:12px 16px;margin-bottom:8px;box-shadow:var(--sh-sm);display:flex;align-items:center;gap:12px;border-left:4px solid var(--teal);}
+.today-item.exam-item{border-left-color:var(--gold);}
+.today-item.hw-item{border-left-color:var(--green-mid);}
+.ti-icon{font-size:1.2rem;flex-shrink:0;}
+.ti-body{flex:1;}
+.ti-name{font-weight:700;font-size:.9rem;color:var(--ink);}
+.ti-meta{font-size:.75rem;color:var(--muted);margin-top:2px;}
+.ti-time{font-size:.75rem;font-weight:700;color:var(--teal-dark);background:var(--teal-ghost);border-radius:50px;padding:2px 10px;white-space:nowrap;}
+.today-empty{text-align:center;padding:28px 10px;color:var(--muted);font-size:.88rem;}
+
+/* ══ CARDS ══ */
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
+.card{background:white;border-radius:var(--r);padding:20px 22px;box-shadow:var(--sh-sm);position:relative;transition:all .2s;overflow:hidden;}
+.card:hover{box-shadow:var(--sh-md);transform:translateY(-2px);}
+.card-actions{position:absolute;top:10px;right:10px;display:flex;gap:3px;}
+.card-edit,.card-del{background:none;border:none;cursor:pointer;font-size:.82rem;opacity:.3;transition:all .15s;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:50%;}
+.card-edit:hover{opacity:.9;background:rgba(8,145,178,.1);}
+.card-del:hover{opacity:.9;background:rgba(220,38,38,.1);}
+.card-name{font-family:'Playfair Display',serif;font-weight:700;font-size:1rem;color:var(--ink);margin-bottom:6px;padding-right:60px;}
+.card.lect{border-left:4px solid var(--teal);}
+.card.exam-c{border-top:4px solid var(--teal);}
+.card.hw-c{border-right:4px solid var(--gold);}
+.lc-time{display:inline-flex;align-items:center;gap:5px;background:var(--teal-ghost);color:var(--teal-dark);border-radius:50px;padding:3px 11px;font-size:.76rem;font-weight:700;margin-bottom:10px;border:1px solid rgba(8,145,178,.15);}
+.lc-days{display:flex;gap:4px;flex-wrap:wrap;}
+.lc-day{background:var(--green-dark);color:var(--gold-light);border-radius:50px;padding:2px 10px;font-size:.68rem;font-weight:700;}
+.lc-room{font-size:.74rem;color:var(--muted);margin-bottom:8px;}
+.ec-meta{font-size:.76rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
+.type-badge{display:inline-flex;border-radius:50px;padding:3px 12px;font-size:.68rem;font-weight:700;letter-spacing:.3px;margin-bottom:8px;text-transform:uppercase;}
+.badge-midterm1{background:#dbeafe;color:#1d4ed8;}
+.badge-midterm2{background:#ede9fe;color:#6d28d9;}
+.badge-final{background:#fef3c7;color:#92400e;border:1px solid #fbbf24;}
+.badge-lab{background:#dcfce7;color:#166534;}
+.badge-quiz{background:#fce7f3;color:#9d174d;}
+.badge-homework{background:#e0f2fe;color:#0369a1;}
+.badge-project{background:#fef9c3;color:#854d0e;}
+.badge-reading{background:#f3e8ff;color:#6b21a8;}
+.chapters-pill{background:var(--teal-ghost);border:1px solid rgba(8,145,178,.18);border-radius:8px;padding:5px 10px;font-size:.75rem;color:var(--ink);margin-top:5px;}
+.ec-desc{font-size:.74rem;color:var(--muted);margin-top:5px;line-height:1.5;}
+.diff-badge{position:absolute;bottom:12px;right:12px;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.6rem;font-weight:800;color:white;box-shadow:0 2px 8px rgba(0,0,0,.2);}
+
+/* ══ NOTES ══ */
+.notes-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
+.note-card{background:white;border-radius:var(--r);padding:18px 20px;box-shadow:var(--sh-sm);position:relative;cursor:pointer;transition:all .2s;min-height:120px;border-top:4px solid var(--teal-mid);}
+.note-card:hover{box-shadow:var(--sh-md);transform:translateY(-2px);}
+.note-card.color-gold{border-top-color:var(--gold);}
+.note-card.color-green{border-top-color:var(--green-mid);}
+.note-card.color-rose{border-top-color:#f43f5e;}
+.note-title{font-weight:700;font-size:.9rem;color:var(--ink);margin-bottom:6px;padding-right:50px;}
+.note-body{font-size:.8rem;color:var(--muted);line-height:1.6;white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;}
+.note-date{font-size:.68rem;color:var(--muted);margin-top:10px;}
+
+/* ══ TODO ══ */
+.todo-add-row{display:flex;gap:10px;margin-bottom:20px;}
+.todo-add-row input{flex:1;padding:11px 16px;border:2px solid var(--border);border-radius:50px;font-family:'DM Sans',sans-serif;font-size:.9rem;color:var(--ink);background:white;outline:none;transition:border .2s;}
+.todo-add-row input:focus{border-color:var(--teal);}
+.todo-add-btn{background:linear-gradient(135deg,var(--teal-dark),var(--teal));color:white;border:none;border-radius:50px;padding:11px 22px;font-family:'DM Sans',sans-serif;font-size:.88rem;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:var(--sh-sm);transition:all .2s;}
+.todo-add-btn:hover{transform:translateY(-1px);box-shadow:var(--sh-md);}
+.todo-filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.tf-btn{padding:6px 16px;border-radius:50px;border:2px solid var(--border);background:white;font-family:'DM Sans',sans-serif;font-size:.78rem;font-weight:700;color:var(--muted);cursor:pointer;transition:all .15s;}
+.tf-btn.active{background:var(--teal-dark);border-color:var(--teal-dark);color:white;}
+.todo-list{display:flex;flex-direction:column;gap:8px;}
+.todo-item{background:white;border-radius:12px;padding:13px 16px;box-shadow:var(--sh-sm);display:flex;align-items:center;gap:12px;transition:all .2s;}
+.todo-item.done{opacity:.55;}
+.todo-item.done .ti-text{text-decoration:line-through;color:var(--muted);}
+.todo-cb{width:20px;height:20px;border-radius:50%;border:2px solid var(--teal);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .2s;background:white;}
+.todo-cb.checked{background:var(--teal);border-color:var(--teal);}
+.todo-cb.checked::after{content:'✓';color:white;font-size:.65rem;font-weight:800;}
+.ti-text{flex:1;font-size:.88rem;color:var(--ink);font-weight:500;}
+.todo-del-btn{background:none;border:none;cursor:pointer;opacity:.25;font-size:.82rem;transition:opacity .15s;}
+.todo-del-btn:hover{opacity:.8;}
+.todo-section-header{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin:14px 0 6px;padding-left:4px;}
+
+/* ══ ADD BTN ══ */
+.add-btn{background:linear-gradient(135deg,var(--teal-dark),var(--teal));color:white;border:none;border-radius:50px;padding:10px 22px;font-family:'DM Sans',sans-serif;font-size:.85rem;font-weight:700;cursor:pointer;box-shadow:var(--sh-md);transition:all .2s;display:inline-flex;align-items:center;gap:7px;}
+.add-btn:hover{transform:translateY(-2px);box-shadow:var(--sh-lg);}
+
+/* ══ EMPTY ══ */
+.empty-state{text-align:center;padding:50px 20px;color:var(--muted);}
+.empty-state .ei{font-size:2.8rem;margin-bottom:10px;opacity:.5;}
+.empty-state p{font-size:.88rem;line-height:1.7;}
+
+/* ══ MODAL ══ */
+.modal-overlay{position:fixed;inset:0;z-index:1000;background:rgba(12,26,46,.45);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;animation:fadeIn .2s;}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal{background:white;border-radius:22px;padding:34px 38px;max-width:490px;width:94%;box-shadow:0 24px 60px rgba(0,0,0,.18);max-height:92vh;overflow-y:auto;animation:mIn .3s cubic-bezier(.34,1.56,.64,1);border-top:5px solid var(--gold);}
+@keyframes mIn{from{transform:translateY(36px) scale(.95);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+.modal h2{font-family:'Playfair Display',serif;font-size:1.25rem;font-weight:700;color:var(--ink);margin-bottom:22px;display:flex;align-items:center;gap:9px;}
+.fg{margin-bottom:16px;}
+.fg label{display:block;font-size:.72rem;font-weight:700;color:var(--teal-dark);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;}
+.fg input,.fg select,.fg textarea{width:100%;padding:11px 14px;border:2px solid rgba(8,145,178,.18);border-radius:var(--r-sm);font-family:'DM Sans',sans-serif;font-size:.9rem;color:var(--ink);background:var(--teal-ghost);outline:none;transition:all .2s;}
+.fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--teal);background:white;box-shadow:0 0 0 3px rgba(8,145,178,.07);}
+.fg textarea{resize:vertical;min-height:70px;line-height:1.5;}
+.days-grid{display:flex;gap:6px;flex-wrap:wrap;}
+.day-chip{padding:6px 13px;border:2px solid rgba(8,145,178,.18);border-radius:50px;font-size:.75rem;font-weight:700;cursor:pointer;transition:all .15s;color:var(--muted);background:var(--teal-ghost);}
+.day-chip.selected{background:var(--green-dark);border-color:var(--green-dark);color:var(--gold-light);}
+.diff-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.diff-dot{width:32px;height:32px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:all .15s;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:800;color:white;}
+.diff-dot:hover{transform:scale(1.1);}
+.diff-dot.selected{border-color:var(--ink);transform:scale(1.17);box-shadow:0 3px 10px rgba(0,0,0,.18);}
+.ma{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;}
+.btn-cancel{background:var(--teal-ghost);border:2px solid rgba(8,145,178,.18);border-radius:50px;padding:10px 22px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:.85rem;color:var(--teal-dark);cursor:pointer;transition:all .2s;}
+.btn-cancel:hover{background:#e0f7fa;}
+.btn-save{background:linear-gradient(135deg,var(--teal-dark),var(--teal));border:none;border-radius:50px;padding:10px 26px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:.85rem;color:white;cursor:pointer;box-shadow:var(--sh-sm);transition:all .2s;}
+.btn-save:hover{transform:translateY(-1px);box-shadow:var(--sh-md);}
+.color-row{display:flex;gap:10px;}
+.color-swatch{width:28px;height:28px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:all .15s;}
+.color-swatch.selected{border-color:var(--ink);transform:scale(1.15);}
+
+/* ══ LESSONS ══ */
+.lesson-search-bar{position:relative;margin-bottom:16px;}
+.lesson-search-bar .lsb-icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:1rem;pointer-events:none;}
+.lesson-search-bar input{width:100%;padding:11px 16px 11px 42px;border:2px solid var(--border);border-radius:50px;font-family:'DM Sans',sans-serif;font-size:.9rem;color:var(--ink);background:white;outline:none;transition:border .2s;box-shadow:var(--sh-sm);}
+.lesson-search-bar input:focus{border-color:var(--teal);}
+.subject-filter{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;}
+.sf-chip{padding:6px 16px;border-radius:50px;border:2px solid var(--border);background:white;font-family:'DM Sans',sans-serif;font-size:.78rem;font-weight:700;color:var(--muted);cursor:pointer;transition:all .15s;}
+.sf-chip.active{background:var(--green-dark);border-color:var(--green-dark);color:var(--gold-light);}
+.lessons-subject-block{margin-bottom:32px;}
+.subject-block-header{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid var(--border);}
+.subject-block-title{font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--ink);}
+.subject-lesson-count{background:var(--green-dark);color:var(--gold-light);border-radius:50px;padding:2px 10px;font-size:.7rem;font-weight:800;}
+.lesson-card{background:white;border-radius:14px;padding:18px 20px;margin-bottom:10px;box-shadow:var(--sh-sm);position:relative;border-left:4px solid var(--teal-mid);transition:all .2s;}
+.lesson-card:hover{box-shadow:var(--sh-md);}
+.lesson-card.all-watched{border-left-color:#22c55e;background:linear-gradient(135deg,#f0fdf4,white);}
+.lesson-header{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;}
+.lesson-chapter-badge{background:var(--teal-ghost);color:var(--teal-dark);border-radius:8px;padding:4px 10px;font-size:.7rem;font-weight:800;white-space:nowrap;border:1px solid rgba(8,145,178,.18);flex-shrink:0;}
+.lesson-title-block{flex:1;}
+.lesson-title{font-weight:700;font-size:.95rem;color:var(--ink);margin-bottom:2px;}
+.lesson-chname{font-size:.76rem;color:var(--muted);font-weight:500;}
+.lesson-card .card-actions{top:10px;right:8px;}
+.video-list{display:flex;flex-direction:column;gap:7px;margin-bottom:8px;}
+.video-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.video-open-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:linear-gradient(135deg,#ef4444,#dc2626);color:white;border-radius:50px;font-size:.76rem;font-weight:700;text-decoration:none;transition:all .15s;}
+.video-open-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(220,38,38,.3);}
+.watched-toggle{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:50px;border:2px solid var(--border);font-size:.72rem;font-weight:700;cursor:pointer;transition:all .15s;background:white;color:var(--muted);white-space:nowrap;}
+.watched-toggle.watched{background:#dcfce7;border-color:#22c55e;color:#166534;}
+.lesson-doc-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:linear-gradient(135deg,var(--teal-dark),var(--teal));color:white;border-radius:50px;font-size:.74rem;font-weight:700;text-decoration:none;transition:all .15s;margin-top:4px;}
+.lesson-doc-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(8,145,178,.3);}
+.lesson-notes-text{font-size:.76rem;color:var(--muted);margin-top:8px;padding:6px 10px;background:var(--teal-ghost);border-radius:8px;line-height:1.5;}
+.add-video-btn{background:none;border:2px dashed rgba(8,145,178,.3);border-radius:50px;padding:8px 18px;font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:700;color:var(--teal);cursor:pointer;transition:all .2s;margin-top:6px;width:100%;}
+.add-video-btn:hover{background:var(--teal-ghost);border-color:var(--teal);}
+.video-field-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;}
+.video-field-row input{flex:1;padding:9px 12px;border:2px solid rgba(8,145,178,.18);border-radius:var(--r-sm);font-family:'DM Sans',sans-serif;font-size:.88rem;color:var(--ink);background:var(--teal-ghost);outline:none;transition:all .2s;}
+.video-field-row input:focus{border-color:var(--teal);background:white;}
+.video-field-label{font-size:.72rem;font-weight:700;color:var(--muted);white-space:nowrap;min-width:56px;}
+.remove-video-btn{background:none;border:none;cursor:pointer;font-size:.85rem;opacity:.4;transition:opacity .15s;padding:4px;}
+.remove-video-btn:hover{opacity:.9;}
+
+/* note fullscreen */
+.note-modal-body{width:100%;min-height:160px;padding:12px 14px;border:2px solid rgba(8,145,178,.18);border-radius:var(--r-sm);font-family:'DM Sans',sans-serif;font-size:.9rem;color:var(--ink);background:var(--teal-ghost);outline:none;resize:vertical;line-height:1.6;}
+.note-modal-body:focus{border-color:var(--teal);background:white;}
+
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-thumb{background:var(--teal-light);border-radius:3px;}
+
+@media(max-width:768px){
+  #sidebar{width:240px;}
+  #sidebar.closed{transform:translateX(-240px);}
+  #main-area{margin-left:0;}
+  #sb-overlay.show{display:block;}
+  .page{padding:18px 16px 60px;}
+  #topbar{padding:0 16px;}
+}
+</style>
+</head>
+<body>
+
+<!-- WELCOME / LOGIN -->
+<div id="welcome-overlay">
+  <div class="wc">
+    <div class="wc-icon">🎓</div>
+    <div class="wc-title">UniFlow</div>
+    <div class="wc-line"></div>
+    <p style="color:rgba(255,255,255,.7);font-size:.9rem;margin-bottom:24px;line-height:1.6;">Your university planner — synced across all your devices.</p>
+    <button class="wc-btn" onclick="signInWithGoogle()" style="display:flex;align-items:center;justify-content:center;gap:10px;">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 20-9 20-20 0-1.3-.1-2.7-.4-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 19 13 24 13c3 0 5.8 1.1 7.9 3l5.7-5.7C34.1 6.5 29.3 4 24 4c-7.7 0-14.4 4.4-17.7 10.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.4 35.6 26.8 36 24 36c-5.2 0-9.6-2.9-11.3-7l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.9 2.6-2.6 4.8-4.8 6.3l6.2 5.2C40.8 36.2 44 30.5 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
+      Sign in with Google
+    </button>
+  </div>
+</div>
+
+<div id="sb-overlay" onclick="closeSidebar()"></div>
+
+<!-- APP -->
+<div id="app">
+
+  <!-- SIDEBAR -->
+  <nav id="sidebar">
+    <div class="sb-header">
+      <div class="sb-logo-icon">📚</div>
+      <div class="sb-logo-text">UniFlow <span>University Planner</span></div>
+    </div>
+    <div class="sb-user">
+      <div class="sb-user-label">Logged in as</div>
+      <div class="sb-user-name" id="sb-username">—</div>
+    </div>
+    <div class="sb-nav">
+      <button class="sb-item active" onclick="goPage('today',this)"><span class="si">🏠</span> Today</button>
+      <button class="sb-item" onclick="goPage('lectures',this)"><span class="si">📖</span> Lectures</button>
+      <button class="sb-item" onclick="goPage('timetable',this)"><span class="si">🗓️</span> Timetable</button>
+      <button class="sb-item" onclick="goPage('exams',this)"><span class="si">📝</span> Exams</button>
+      <button class="sb-item" onclick="goPage('homework',this)"><span class="si">📚</span> Assignments</button>
+      <div class="sb-divider"></div>
+      <button class="sb-item" onclick="goPage('notes',this)"><span class="si">🗒️</span> Notes</button>
+      <button class="sb-item" onclick="goPage('todo',this)"><span class="si">✅</span> To-Do List</button>
+      <div class="sb-divider"></div>
+      <button class="sb-item" onclick="goPage('lessons',this)"><span class="si">🎬</span> Lessons</button>
+    </div>
+    <div class="sb-footer">
+      <button id="signout-btn" onclick="doSignOut()" style="display:none;align-items:center;gap:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:9px 14px;color:rgba(255,255,255,.7);font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:600;cursor:pointer;width:100%;transition:all .2s;" onmouseover="this.style.background='rgba(255,255,255,.14)'" onmouseout="this.style.background='rgba(255,255,255,.08)'">
+        <span>🚪</span> Sign Out
+      </button>
+      <div class="sb-footer-text" style="margin-top:8px;">UniFlow v2.0</div>
+    </div>
+  </nav>
+
+  <!-- MAIN -->
+  <div id="main-area">
+    <div id="topbar">
+      <button id="hamburger" onclick="toggleSidebar()">
+        <span></span><span></span><span></span>
+      </button>
+      <div id="topbar-title">Today</div>
+      <div id="topbar-date"></div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;">
+
+      <!-- TODAY -->
+      <div class="page active" id="page-today">
+        <div class="today-date-banner">
+          <div class="tdb-day" id="today-day-name"></div>
+          <div class="tdb-date" id="today-full-date"></div>
+        </div>
+        <div id="today-content"></div>
+      </div>
+
+      <!-- LECTURES -->
+      <div class="page" id="page-lectures">
+        <div class="ph">
+          <div class="ph-title">📖 My Lectures</div>
+          <button class="add-btn" onclick="openModal('lecture')">＋ Add Lecture</button>
+        </div>
+        <div class="cards-grid" id="lecture-list"></div>
+        <div class="empty-state" id="lecture-empty"><div class="ei">📖</div><p>No lectures yet. Click <strong>+ Add Lecture</strong>!</p></div>
+      </div>
+
+      <!-- TIMETABLE -->
+      <div class="page" id="page-timetable">
+        <div class="ph"><div class="ph-title">🗓️ Weekly Timetable</div></div>
+        <div style="overflow-x:auto;border-radius:var(--r);box-shadow:var(--sh-md);">
+          <table id="tt-table" style="width:100%;border-collapse:separate;border-spacing:0;min-width:640px;">
+            <thead><tr>
+              <th style="background:linear-gradient(135deg,var(--green-dark),var(--teal-dark));color:white;padding:13px 10px;font-size:.78rem;font-weight:700;text-align:center;letter-spacing:.5px;text-transform:uppercase;border-radius:var(--r) 0 0 0;">Time</th>
+              <th style="background:linear-gradient(135deg,var(--green-dark),var(--teal-dark));color:white;padding:13px 10px;font-size:.78rem;font-weight:700;text-align:center;letter-spacing:.5px;text-transform:uppercase;">Sun</th>
+              <th style="background:linear-gradient(135deg,var(--green-dark),var(--teal-dark));color:white;padding:13px 10px;font-size:.78rem;font-weight:700;text-align:center;letter-spacing:.5px;text-transform:uppercase;">Mon</th>
+              <th style="background:linear-gradient(135deg,var(--green-dark),var(--teal-dark));color:white;padding:13px 10px;font-size:.78rem;font-weight:700;text-align:center;letter-spacing:.5px;text-transform:uppercase;">Tue</th>
+              <th style="background:linear-gradient(135deg,var(--green-dark),var(--teal-dark));color:white;padding:13px 10px;font-size:.78rem;font-weight:700;text-align:center;letter-spacing:.5px;text-transform:uppercase;">Wed</th>
+              <th style="background:linear-gradient(135deg,var(--green-dark),var(--teal-dark));color:white;padding:13px 10px;font-size:.78rem;font-weight:700;text-align:center;letter-spacing:.5px;text-transform:uppercase;border-radius:0 var(--r) 0 0;">Thu</th>
+            </tr></thead>
+            <tbody id="tt-body"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="tt-empty" style="display:none"><div class="ei">🗓️</div><p>Add lectures to populate your timetable.</p></div>
+      </div>
+
+      <!-- EXAMS -->
+      <div class="page" id="page-exams">
+        <div class="ph">
+          <div class="ph-title">📝 Exams</div>
+          <button class="add-btn" onclick="openModal('exam')">＋ Add Exam</button>
+        </div>
+        <div class="cards-grid" id="exam-list"></div>
+        <div class="empty-state" id="exam-empty"><div class="ei">📝</div><p>No exams added yet.</p></div>
+      </div>
+
+      <!-- HOMEWORK -->
+      <div class="page" id="page-homework">
+        <div class="ph">
+          <div class="ph-title">📚 Assignments</div>
+          <button class="add-btn" onclick="openModal('hw')">＋ Add Assignment</button>
+        </div>
+        <div class="cards-grid" id="hw-list"></div>
+        <div class="empty-state" id="hw-empty"><div class="ei">📚</div><p>No assignments added yet.</p></div>
+      </div>
+
+      <!-- NOTES -->
+      <div class="page" id="page-notes">
+        <div class="ph">
+          <div class="ph-title">🗒️ Notes</div>
+          <button class="add-btn" onclick="openModal('note')">＋ New Note</button>
+        </div>
+        <div class="notes-grid" id="notes-list"></div>
+        <div class="empty-state" id="notes-empty"><div class="ei">🗒️</div><p>No notes yet. Jot something down!</p></div>
+      </div>
+
+      <!-- TODO -->
+      <div class="page" id="page-todo">
+        <div class="ph"><div class="ph-title">✅ To-Do List</div></div>
+        <div class="todo-add-row">
+          <input id="todo-input" type="text" placeholder="Add a new task…" maxlength="200" onkeydown="if(event.key==='Enter')addTodo()" />
+          <button class="todo-add-btn" onclick="addTodo()">Add</button>
+        </div>
+        <div class="todo-filters">
+          <button class="tf-btn active" onclick="filterTodos('all',this)">All</button>
+          <button class="tf-btn" onclick="filterTodos('active',this)">Active</button>
+          <button class="tf-btn" onclick="filterTodos('done',this)">Done</button>
+        </div>
+        <div class="todo-list" id="todo-list"></div>
+        <div class="empty-state" id="todo-empty"><div class="ei">✅</div><p>No tasks yet!</p></div>
+      </div>
+
+      <!-- LESSONS -->
+      <div class="page" id="page-lessons">
+        <div class="ph">
+          <div class="ph-title">🎬 Lessons</div>
+          <button class="add-btn" onclick="openLessonModal()">＋ Add Lesson</button>
+        </div>
+        <!-- Search + subject filter -->
+        <div class="lesson-search-bar">
+          <span class="lsb-icon">🔍</span>
+          <input id="lesson-search" type="text" placeholder="Search by subject name…" oninput="renderLessons()" />
+        </div>
+        <div class="subject-filter" id="subject-filter"></div>
+        <div id="lessons-content"></div>
+        <div class="empty-state" id="lessons-empty"><div class="ei">🎬</div><p>No lessons yet.<br>Click <strong>+ Add Lesson</strong> to get started!</p></div>
+      </div>
+
+    </div><!-- end scroll wrapper -->
+  </div><!-- end main-area -->
+</div><!-- end app -->
+
+<!-- ══ ADD MODALS ══ -->
+
+<!-- LECTURE -->
+<div class="modal-overlay" id="modal-lecture" style="display:none">
+  <div class="modal">
+    <h2>📖 Add Lecture</h2>
+    <div class="fg"><label>Course Name</label><input id="l-name" placeholder="e.g. Calculus II" /></div>
+    <div class="fg"><label>Start Time</label><input id="l-start" type="time" /></div>
+    <div class="fg"><label>End Time</label><input id="l-end" type="time" /></div>
+    <div class="fg"><label>Days</label><div class="days-grid" id="l-days">
+      <div class="day-chip" onclick="toggleDay(this,'Sun')">Sun</div>
+      <div class="day-chip" onclick="toggleDay(this,'Mon')">Mon</div>
+      <div class="day-chip" onclick="toggleDay(this,'Tue')">Tue</div>
+      <div class="day-chip" onclick="toggleDay(this,'Wed')">Wed</div>
+      <div class="day-chip" onclick="toggleDay(this,'Thu')">Thu</div>
+      <div class="day-chip" onclick="toggleDay(this,'Fri')">Fri</div>
+      <div class="day-chip" onclick="toggleDay(this,'Sat')">Sat</div>
+    </div></div>
+    <div class="fg"><label>Room (optional)</label><input id="l-room" placeholder="e.g. Hall A-101" /></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeModal('lecture')">Cancel</button><button class="btn-save" onclick="saveLecture()">Save</button></div>
+  </div>
+</div>
+
+<!-- EXAM -->
+<div class="modal-overlay" id="modal-exam" style="display:none">
+  <div class="modal">
+    <h2>📝 Add Exam</h2>
+    <div class="fg"><label>Course Name</label><input id="e-name" placeholder="e.g. Physics" /></div>
+    <div class="fg"><label>Exam Type</label><select id="e-type">
+      <option value="partial1">Partial 1</option>
+      <option value="partial2">Partial 2</option>
+      <option value="midterm">Midterm</option>
+      <option value="quiz">Quiz</option>
+      <option value="final">Final</option>
+      <option value="lab">Lab</option>
+    </select></div>
+    <div class="fg"><label>Date</label><input id="e-date" type="date" /></div>
+    <div class="fg"><label>Time</label><input id="e-time" type="time" /></div>
+    <div class="fg"><label>Duration (minutes)</label><input id="e-dur" type="number" placeholder="e.g. 90" min="5" /></div>
+    <div class="fg"><label>Chapters / Topics</label><input id="e-chapters" placeholder="e.g. Ch 1–5" /></div>
+    <div class="fg"><label>Notes (optional)</label><textarea id="e-desc" placeholder="Any extra details…"></textarea></div>
+    <div class="fg"><label>Difficulty 1→5</label><div class="diff-row" id="e-diff-row">
+      <div class="diff-dot" style="background:var(--diff-1)" onclick="selectDiff(1)">1</div>
+      <div class="diff-dot" style="background:var(--diff-2)" onclick="selectDiff(2)">2</div>
+      <div class="diff-dot" style="background:var(--diff-3)" onclick="selectDiff(3)">3</div>
+      <div class="diff-dot" style="background:var(--diff-4)" onclick="selectDiff(4)">4</div>
+      <div class="diff-dot" style="background:var(--diff-5)" onclick="selectDiff(5)">5</div>
+      <span id="diff-label" style="font-size:.78rem;color:var(--muted);font-weight:600;"></span>
+    </div></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeModal('exam')">Cancel</button><button class="btn-save" onclick="saveExam()">Save</button></div>
+  </div>
+</div>
+
+<!-- HW -->
+<div class="modal-overlay" id="modal-hw" style="display:none">
+  <div class="modal">
+    <h2>📚 Add Assignment</h2>
+    <div class="fg"><label>Subject</label><input id="h-name" placeholder="e.g. Organic Chemistry" /></div>
+    <div class="fg"><label>Type</label><select id="h-type">
+      <option value="homework">Homework</option>
+      <option value="midterm1">Partial Exam 1</option>
+      <option value="midterm2">Partial Exam 2</option>
+      <option value="final">Final Exam</option>
+      <option value="lab">Lab Report</option>
+      <option value="project">Project</option>
+      <option value="reading">Reading</option>
+    </select></div>
+    <div class="fg"><label>Due Date</label><input id="h-date" type="date" /></div>
+    <div class="fg"><label>Due Time</label><input id="h-time" type="time" /></div>
+    <div class="fg"><label>Est. Time (minutes)</label><input id="h-dur" type="number" placeholder="e.g. 60" min="5" /></div>
+    <div class="fg"><label>Required Chapters</label><input id="h-chapters" placeholder="e.g. Ch 3, sections 1–3" /></div>
+    <div class="fg"><label>Description (optional)</label><textarea id="h-desc" placeholder="Details…"></textarea></div>
+    <div class="fg"><label>Difficulty 1→5</label><div class="diff-row" id="h-diff-row">
+      <div class="diff-dot" style="background:var(--diff-1)" onclick="selectHwDiff(1)">1</div>
+      <div class="diff-dot" style="background:var(--diff-2)" onclick="selectHwDiff(2)">2</div>
+      <div class="diff-dot" style="background:var(--diff-3)" onclick="selectHwDiff(3)">3</div>
+      <div class="diff-dot" style="background:var(--diff-4)" onclick="selectHwDiff(4)">4</div>
+      <div class="diff-dot" style="background:var(--diff-5)" onclick="selectHwDiff(5)">5</div>
+      <span id="hw-diff-label" style="font-size:.78rem;color:var(--muted);font-weight:600;"></span>
+    </div></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeModal('hw')">Cancel</button><button class="btn-save" onclick="saveHw()">Save</button></div>
+  </div>
+</div>
+
+<!-- NOTE -->
+<div class="modal-overlay" id="modal-note" style="display:none">
+  <div class="modal">
+    <h2 id="note-modal-title">🗒️ New Note</h2>
+    <div class="fg"><label>Title</label><input id="n-title" placeholder="Note title…" /></div>
+    <div class="fg"><label>Content</label><textarea id="n-body" class="note-modal-body" placeholder="Write anything…"></textarea></div>
+    <div class="fg"><label>Color</label><div class="color-row">
+      <div class="color-swatch selected" style="background:var(--teal-mid)" data-color="teal" onclick="selectNoteColor('teal',this)"></div>
+      <div class="color-swatch" style="background:var(--gold)" data-color="gold" onclick="selectNoteColor('gold',this)"></div>
+      <div class="color-swatch" style="background:var(--green-mid)" data-color="green" onclick="selectNoteColor('green',this)"></div>
+      <div class="color-swatch" style="background:#f43f5e" data-color="rose" onclick="selectNoteColor('rose',this)"></div>
+    </div></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeModal('note')">Cancel</button><button class="btn-save" onclick="saveNote()">Save</button></div>
+  </div>
+</div>
+
+<!-- ══ EDIT MODALS ══ -->
+
+<!-- EDIT LECTURE -->
+<div class="modal-overlay" id="edit-modal-lecture" style="display:none">
+  <div class="modal">
+    <h2>✏️ Edit Lecture</h2>
+    <div class="fg"><label>Course Name</label><input id="el-name" /></div>
+    <div class="fg"><label>Start Time</label><input id="el-start" type="time" /></div>
+    <div class="fg"><label>End Time</label><input id="el-end" type="time" /></div>
+    <div class="fg"><label>Days</label><div class="days-grid" id="el-days">
+      <div class="day-chip" data-day="Sun" onclick="toggleEditDay(this,'Sun')">Sun</div>
+      <div class="day-chip" data-day="Mon" onclick="toggleEditDay(this,'Mon')">Mon</div>
+      <div class="day-chip" data-day="Tue" onclick="toggleEditDay(this,'Tue')">Tue</div>
+      <div class="day-chip" data-day="Wed" onclick="toggleEditDay(this,'Wed')">Wed</div>
+      <div class="day-chip" data-day="Thu" onclick="toggleEditDay(this,'Thu')">Thu</div>
+      <div class="day-chip" data-day="Fri" onclick="toggleEditDay(this,'Fri')">Fri</div>
+      <div class="day-chip" data-day="Sat" onclick="toggleEditDay(this,'Sat')">Sat</div>
+    </div></div>
+    <div class="fg"><label>Room (optional)</label><input id="el-room" /></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeEditModal('lecture')">Cancel</button><button class="btn-save" onclick="saveEditLecture()">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- EDIT EXAM -->
+<div class="modal-overlay" id="edit-modal-exam" style="display:none">
+  <div class="modal">
+    <h2>✏️ Edit Exam</h2>
+    <div class="fg"><label>Course Name</label><input id="ee-name" /></div>
+    <div class="fg"><label>Exam Type</label><select id="ee-type">
+      <option value="partial1">Partial 1</option>
+      <option value="partial2">Partial 2</option>
+      <option value="midterm">Midterm</option>
+      <option value="quiz">Quiz</option>
+      <option value="final">Final</option>
+      <option value="lab">Lab</option>
+    </select></div>
+    <div class="fg"><label>Date</label><input id="ee-date" type="date" /></div>
+    <div class="fg"><label>Time</label><input id="ee-time" type="time" /></div>
+    <div class="fg"><label>Duration (min)</label><input id="ee-dur" type="number" min="5" /></div>
+    <div class="fg"><label>Chapters</label><input id="ee-chapters" /></div>
+    <div class="fg"><label>Notes</label><textarea id="ee-desc"></textarea></div>
+    <div class="fg"><label>Difficulty 1→5</label><div class="diff-row" id="ee-diff-row">
+      <div class="diff-dot" style="background:var(--diff-1)" onclick="selectEditDiff(1)">1</div>
+      <div class="diff-dot" style="background:var(--diff-2)" onclick="selectEditDiff(2)">2</div>
+      <div class="diff-dot" style="background:var(--diff-3)" onclick="selectEditDiff(3)">3</div>
+      <div class="diff-dot" style="background:var(--diff-4)" onclick="selectEditDiff(4)">4</div>
+      <div class="diff-dot" style="background:var(--diff-5)" onclick="selectEditDiff(5)">5</div>
+      <span id="ee-diff-label" style="font-size:.78rem;color:var(--muted);font-weight:600;"></span>
+    </div></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeEditModal('exam')">Cancel</button><button class="btn-save" onclick="saveEditExam()">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- EDIT HW -->
+<div class="modal-overlay" id="edit-modal-hw" style="display:none">
+  <div class="modal">
+    <h2>✏️ Edit Assignment</h2>
+    <div class="fg"><label>Subject</label><input id="eh-name" /></div>
+    <div class="fg"><label>Type</label><select id="eh-type">
+      <option value="homework">Homework</option>
+      <option value="midterm1">Partial Exam 1</option>
+      <option value="midterm2">Partial Exam 2</option>
+      <option value="final">Final Exam</option>
+      <option value="lab">Lab Report</option>
+      <option value="project">Project</option>
+      <option value="reading">Reading</option>
+    </select></div>
+    <div class="fg"><label>Due Date</label><input id="eh-date" type="date" /></div>
+    <div class="fg"><label>Due Time</label><input id="eh-time" type="time" /></div>
+    <div class="fg"><label>Est. Time (min)</label><input id="eh-dur" type="number" min="5" /></div>
+    <div class="fg"><label>Chapters</label><input id="eh-chapters" /></div>
+    <div class="fg"><label>Description</label><textarea id="eh-desc"></textarea></div>
+    <div class="fg"><label>Difficulty 1→5</label><div class="diff-row" id="eh-diff-row">
+      <div class="diff-dot" style="background:var(--diff-1)" onclick="selectEditHwDiff(1)">1</div>
+      <div class="diff-dot" style="background:var(--diff-2)" onclick="selectEditHwDiff(2)">2</div>
+      <div class="diff-dot" style="background:var(--diff-3)" onclick="selectEditHwDiff(3)">3</div>
+      <div class="diff-dot" style="background:var(--diff-4)" onclick="selectEditHwDiff(4)">4</div>
+      <div class="diff-dot" style="background:var(--diff-5)" onclick="selectEditHwDiff(5)">5</div>
+      <span id="eh-diff-label" style="font-size:.78rem;color:var(--muted);font-weight:600;"></span>
+    </div></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeEditModal('hw')">Cancel</button><button class="btn-save" onclick="saveEditHw()">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- LESSON -->
+<div class="modal-overlay" id="modal-lesson" style="display:none">
+  <div class="modal" style="max-width:540px;">
+    <h2>🎬 Add Lesson</h2>
+    <div class="fg">
+      <label>Subject / Course</label>
+      <input id="ls-subject" placeholder="e.g. Calculus II" list="ls-subject-list" autocomplete="off" />
+      <datalist id="ls-subject-list"></datalist>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="fg"><label>Chapter Number</label><input id="ls-num" type="number" placeholder="e.g. 3" min="1" /></div>
+      <div class="fg"><label>Chapter Name</label><input id="ls-chname" placeholder="e.g. Derivatives" /></div>
+    </div>
+    <div class="fg"><label>Lesson Title</label><input id="ls-title" placeholder="e.g. Introduction to Limits" /></div>
+    <div class="fg">
+      <label>📹 Videos</label>
+      <div id="ls-videos-container"></div>
+      <button type="button" class="add-video-btn" onclick="addVideoField('ls-videos-container')">＋ Add Video Link</button>
+    </div>
+    <div class="fg"><label>📄 Document / Slides (Google Drive link)</label><input id="ls-doc" placeholder="Paste Drive link…" /></div>
+    <div class="fg"><label>Notes (optional)</label><textarea id="ls-notes" placeholder="e.g. watch first 20 min only, pages 10–25…"></textarea></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeModal('lesson')">Cancel</button><button class="btn-save" onclick="saveLesson()">Save</button></div>
+  </div>
+</div>
+
+<!-- EDIT LESSON -->
+<div class="modal-overlay" id="edit-modal-lesson" style="display:none">
+  <div class="modal" style="max-width:540px;">
+    <h2>✏️ Edit Lesson</h2>
+    <div class="fg">
+      <label>Subject / Course</label>
+      <input id="els-subject" list="ls-subject-list" autocomplete="off" />
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="fg"><label>Chapter Number</label><input id="els-num" type="number" min="1" /></div>
+      <div class="fg"><label>Chapter Name</label><input id="els-chname" /></div>
+    </div>
+    <div class="fg"><label>Lesson Title</label><input id="els-title" /></div>
+    <div class="fg">
+      <label>📹 Videos</label>
+      <div id="els-videos-container"></div>
+      <button type="button" class="add-video-btn" onclick="addVideoField('els-videos-container')">＋ Add Video Link</button>
+    </div>
+    <div class="fg"><label>📄 Document / Slides</label><input id="els-doc" placeholder="Paste Drive link…" /></div>
+    <div class="fg"><label>Notes</label><textarea id="els-notes"></textarea></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeEditModal('lesson')">Cancel</button><button class="btn-save" onclick="saveEditLesson()">Save Changes</button></div>
+  </div>
+</div>
+
+<!-- EDIT NOTE -->
+<div class="modal-overlay" id="edit-modal-note" style="display:none">
+  <div class="modal">
+    <h2>✏️ Edit Note</h2>
+    <div class="fg"><label>Title</label><input id="en-title" /></div>
+    <div class="fg"><label>Content</label><textarea id="en-body" class="note-modal-body"></textarea></div>
+    <div class="fg"><label>Color</label><div class="color-row" id="en-color-row">
+      <div class="color-swatch" style="background:var(--teal-mid)" data-color="teal" onclick="selectEditNoteColor('teal',this)"></div>
+      <div class="color-swatch" style="background:var(--gold)" data-color="gold" onclick="selectEditNoteColor('gold',this)"></div>
+      <div class="color-swatch" style="background:var(--green-mid)" data-color="green" onclick="selectEditNoteColor('green',this)"></div>
+      <div class="color-swatch" style="background:#f43f5e" data-color="rose" onclick="selectEditNoteColor('rose',this)"></div>
+    </div></div>
+    <div class="ma"><button class="btn-cancel" onclick="closeEditModal('note')">Cancel</button><button class="btn-save" onclick="saveEditNote()">Save Changes</button></div>
+  </div>
+</div>
+
+<script>
+// ── DATA (Firebase fills these on login via loadData()) ──
+var lectures = [], exams = [], hws = [], lessons = [], notes = [], todos = [];
+
+let selDays=[], selDiff=0, selHwDiff=0, selNoteColor='teal';
+let editingId=null, editNoteColor='teal';
+let todoFilter='all', lessonSubjectFilter='all';
+
+const DL=['','Very Easy 😊','Easy 🙂','Medium 😐','Hard 😬','Very Hard 😱'];
+const DC=['','#6ee7b7','#34d399','#fbbf24','#f97316','#dc2626'];
+const TL={partial1:'Partial 1',partial2:'Partial 2',midterm:'Midterm',quiz:'Quiz',final:'Final',lab:'Lab'};
+const TB={partial1:'badge-midterm1',partial2:'badge-midterm2',midterm:'badge-midterm1',quiz:'badge-quiz',final:'badge-final',lab:'badge-lab'};
+const HL={homework:'Homework',midterm1:'Partial 1',midterm2:'Partial 2',final:'Final',lab:'Lab Report',project:'Project',reading:'Reading'};
+const HB={homework:'badge-homework',midterm1:'badge-midterm1',midterm2:'badge-midterm2',final:'badge-final',lab:'badge-lab',project:'badge-project',reading:'badge-reading'};
+const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const SDAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+// ── AUTH handled by Firebase module above ──
+
+// ── SIDEBAR ──
+let sidebarOpen=true;
+function toggleSidebar(){
+  sidebarOpen=!sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('closed',!sidebarOpen);
+  document.getElementById('main-area').classList.toggle('expanded',!sidebarOpen);
+  document.getElementById('hamburger').classList.toggle('open',!sidebarOpen);
+  if(window.innerWidth<=768){
+    document.getElementById('sb-overlay').classList.toggle('show',sidebarOpen);
+  }
+}
+function closeSidebar(){
+  sidebarOpen=false;
+  document.getElementById('sidebar').classList.add('closed');
+  document.getElementById('main-area').classList.add('expanded');
+  document.getElementById('hamburger').classList.remove('open');
+  document.getElementById('sb-overlay').classList.remove('show');
+}
+
+// On mobile default closed
+if(window.innerWidth<=768){
+  sidebarOpen=false;
+  document.getElementById('sidebar').classList.add('closed');
+  document.getElementById('main-area').classList.add('expanded');
+}
+
+// ── PAGES ──
+const PAGE_TITLES={today:'Today',lectures:'Lectures',timetable:'Timetable',exams:'Exams',homework:'Assignments',notes:'Notes',todo:'To-Do List'};
+function goPage(name,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  btn.classList.add('active');
+  document.getElementById('topbar-title').textContent=PAGE_TITLES[name];
+  if(name==='timetable') renderTimetable();
+  if(name==='today') renderToday();
+  if(window.innerWidth<=768) closeSidebar();
+}
+
+// ── TODAY ──
+function setTodayBanner(){
+  const now=new Date();
+  document.getElementById('today-day-name').textContent=DAYS[now.getDay()];
+  document.getElementById('today-full-date').textContent=`${MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+}
+function setTopbarDate(){
+  const now=new Date();
+  document.getElementById('topbar-date').textContent=`${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}`;
+}
+function renderToday(){
+  const now=new Date();
+  const todayStr=now.toISOString().slice(0,10);
+  const dayShort=SDAYS[now.getDay()];
+  const el=document.getElementById('today-content');
+  let html='';
+
+  // Today's lectures
+  const todayLectures=lectures.filter(l=>l.days.includes(dayShort)).sort((a,b)=>a.start.localeCompare(b.start));
+  html+=`<div class="today-section"><div class="today-section-title">📖 Lectures Today</div>`;
+  if(todayLectures.length){
+    todayLectures.forEach(l=>{
+      html+=`<div class="today-item"><span class="ti-icon">📖</span><div class="ti-body"><div class="ti-name">${l.name}</div><div class="ti-meta">${l.room?'📍 '+l.room:''}</div></div><span class="ti-time">${fmt(l.start)} – ${fmt(l.end)}</span></div>`;
+    });
+  } else html+=`<div class="today-empty">No lectures today 🎉</div>`;
+  html+=`</div>`;
+
+  // Upcoming exams (next 7 days)
+  const upcomingExams=exams.filter(e=>e.date>=todayStr && e.date<=addDays(todayStr,7)).slice(0,5);
+  html+=`<div class="today-section"><div class="today-section-title">📝 Upcoming Exams (7 days)</div>`;
+  if(upcomingExams.length){
+    upcomingExams.forEach(e=>{
+      html+=`<div class="today-item exam-item"><span class="ti-icon">📝</span><div class="ti-body"><div class="ti-name">${e.name}</div><div class="ti-meta">${TL[e.type]}${e.chapters?' · '+e.chapters:''}</div></div><span class="ti-time">${e.date}${e.time?' '+fmt(e.time):''}</span></div>`;
+    });
+  } else html+=`<div class="today-empty">No exams in the next 7 days 😌</div>`;
+  html+=`</div>`;
+
+  // Due assignments (next 7 days)
+  const dueSoon=hws.filter(h=>h.date>=todayStr && h.date<=addDays(todayStr,7)).slice(0,5);
+  html+=`<div class="today-section"><div class="today-section-title">📚 Due Soon (7 days)</div>`;
+  if(dueSoon.length){
+    dueSoon.forEach(h=>{
+      html+=`<div class="today-item hw-item"><span class="ti-icon">📚</span><div class="ti-body"><div class="ti-name">${h.name}</div><div class="ti-meta">${HL[h.type]||h.type}${h.chapters?' · '+h.chapters:''}</div></div><span class="ti-time">Due ${h.date}</span></div>`;
+    });
+  } else html+=`<div class="today-empty">Nothing due soon 🌟</div>`;
+  html+=`</div>`;
+
+  // Active todos
+  const activeTodos=todos.filter(t=>!t.done).slice(0,5);
+  html+=`<div class="today-section"><div class="today-section-title">✅ Pending Tasks</div>`;
+  if(activeTodos.length){
+    activeTodos.forEach(t=>{
+      html+=`<div class="today-item" style="border-left-color:#0891b2"><span class="ti-icon">☐</span><div class="ti-body"><div class="ti-name">${t.text}</div></div></div>`;
+    });
+  } else html+=`<div class="today-empty">All tasks done! 🎉</div>`;
+  html+=`</div>`;
+
+  el.innerHTML=html;
+}
+function addDays(dateStr,n){const d=new Date(dateStr);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);}
+
+// ── MODALS ──
+function openModal(t){
+  selDays=[];selDiff=0;selHwDiff=0;selNoteColor='teal';
+  document.querySelectorAll('#modal-'+t+' .day-chip').forEach(c=>c.classList.remove('selected'));
+  document.querySelectorAll('#modal-'+t+' .diff-dot').forEach(d=>d.classList.remove('selected'));
+  document.querySelectorAll('#modal-'+t+' .color-swatch').forEach((s,i)=>s.classList.toggle('selected',i===0));
+  const labels=['diff-label','hw-diff-label'];
+  labels.forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='';});
+  const fields={
+    lecture:['l-name','l-start','l-end','l-room'],
+    exam:['e-name','e-date','e-time','e-dur','e-chapters','e-desc'],
+    hw:['h-name','h-date','h-time','h-dur','h-chapters','h-desc'],
+    note:['n-title','n-body'],
+    lesson:['ls-subject','ls-num','ls-title','ls-video','ls-doc','ls-other','ls-notes']
+  };
+  (fields[t]||[]).forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  document.getElementById('modal-'+t).style.display='flex';
+}
+function closeModal(t){document.getElementById('modal-'+t).style.display='none';}
+function closeEditModal(t){document.getElementById('edit-modal-'+t).style.display='none';}
+
+// ── DAYS ──
+function toggleDay(el,day){el.classList.toggle('selected');selDays=el.classList.contains('selected')?[...selDays,day]:selDays.filter(d=>d!==day);}
+function toggleEditDay(el,day){el.classList.toggle('selected');selDays=el.classList.contains('selected')?[...selDays,day]:selDays.filter(d=>d!==day);}
+
+// ── DIFF ──
+function selectDiff(n){selDiff=n;document.querySelectorAll('#e-diff-row .diff-dot').forEach((d,i)=>d.classList.toggle('selected',i+1===n));document.getElementById('diff-label').textContent=DL[n];}
+function selectHwDiff(n){selHwDiff=n;document.querySelectorAll('#h-diff-row .diff-dot').forEach((d,i)=>d.classList.toggle('selected',i+1===n));document.getElementById('hw-diff-label').textContent=DL[n];}
+function selectEditDiff(n){selDiff=n;document.querySelectorAll('#ee-diff-row .diff-dot').forEach((d,i)=>d.classList.toggle('selected',i+1===n));document.getElementById('ee-diff-label').textContent=DL[n];}
+function selectEditHwDiff(n){selHwDiff=n;document.querySelectorAll('#eh-diff-row .diff-dot').forEach((d,i)=>d.classList.toggle('selected',i+1===n));document.getElementById('eh-diff-label').textContent=DL[n];}
+
+// ── NOTE COLOR ──
+function selectNoteColor(c,el){selNoteColor=c;document.querySelectorAll('#modal-note .color-swatch').forEach(s=>s.classList.remove('selected'));el.classList.add('selected');}
+function selectEditNoteColor(c,el){editNoteColor=c;document.querySelectorAll('#en-color-row .color-swatch').forEach(s=>s.classList.remove('selected'));el.classList.add('selected');}
+
+// ── SAVE ──
+function saveLecture(){
+  const name=g('l-name'),start=g('l-start'),end=g('l-end');
+  if(!name||!start||!end||!selDays.length){alert('Please fill course name, times, and select at least one day.');return;}
+  lectures.push({id:Date.now(),name,start,end,days:[...selDays],room:g('l-room')});
+  sv();closeModal('lecture');renderLectures();
+}
+function saveExam(){
+  const name=g('e-name'),date=g('e-date');
+  if(!name||!date){alert('Fill in course name and date.');return;}
+  exams.push({id:Date.now(),name,type:gs('e-type'),date,time:g('e-time'),dur:g('e-dur'),chapters:g('e-chapters'),desc:g('e-desc'),diff:selDiff});
+  exams.sort((a,b)=>a.date.localeCompare(b.date));
+  sv();closeModal('exam');renderExams();
+}
+function saveHw(){
+  const name=g('h-name'),date=g('h-date');
+  if(!name||!date){alert('Fill in subject and due date.');return;}
+  hws.push({id:Date.now(),name,type:gs('h-type'),date,time:g('h-time'),dur:g('h-dur'),chapters:g('h-chapters'),desc:g('h-desc'),diff:selHwDiff});
+  hws.sort((a,b)=>a.date.localeCompare(b.date));
+  sv();closeModal('hw');renderHw();
+}
+function openLessonModal(){
+  document.getElementById('ls-subject').value='';
+  document.getElementById('ls-num').value='';
+  document.getElementById('ls-chname').value='';
+  document.getElementById('ls-title').value='';
+  document.getElementById('ls-doc').value='';
+  document.getElementById('ls-notes').value='';
+  document.getElementById('ls-videos-container').innerHTML='';
+  addVideoField('ls-videos-container');
+  document.getElementById('modal-lesson').style.display='flex';
+}
+function addVideoField(containerId){
+  const c=document.getElementById(containerId);
+  const idx=c.children.length+1;
+  const div=document.createElement('div');
+  div.className='video-field-row';
+  div.innerHTML=`<span class="video-field-label">Video ${idx}</span><input type="text" placeholder="Paste Google Drive / YouTube link…" /><button type="button" class="remove-video-btn" onclick="this.parentElement.remove();reindexVideos('${containerId}')">✕</button>`;
+  c.appendChild(div);
+}
+function reindexVideos(containerId){
+  document.querySelectorAll('#'+containerId+' .video-field-label').forEach((el,i)=>el.textContent='Video '+(i+1));
+}
+function getVideoLinks(containerId){
+  return [...document.querySelectorAll('#'+containerId+' input')].map(i=>i.value.trim()).filter(Boolean);
+}
+function saveLesson(){
+  const subject=document.getElementById('ls-subject').value.trim();
+  const title=document.getElementById('ls-title').value.trim();
+  if(!subject||!title){alert('Please fill in subject and lesson title.');return;}
+  const videos=getVideoLinks('ls-videos-container');
+  const num=parseInt(document.getElementById('ls-num').value)||lessons.filter(l=>l.subject===subject).length+1;
+  lessons.push({
+    id:Date.now(),subject,num,
+    chname:document.getElementById('ls-chname').value.trim(),
+    title,videos,
+    doc:document.getElementById('ls-doc').value.trim(),
+    notes:document.getElementById('ls-notes').value.trim(),
+    watched:{}
+  });
+  lessons.sort((a,b)=>a.subject.localeCompare(b.subject)||a.num-b.num);
+  sv();closeModal('lesson');renderLessons();updateSubjectDatalist();
+}
+
+// ── EDIT ──
+function openEdit(type,id){
+  editingId=id;
+  if(type==='lecture'){
+    const l=lectures.find(x=>x.id===id);if(!l)return;
+    document.getElementById('el-name').value=l.name;
+    document.getElementById('el-start').value=l.start;
+    document.getElementById('el-end').value=l.end;
+    document.getElementById('el-room').value=l.room||'';
+    selDays=[...l.days];
+    document.querySelectorAll('#el-days .day-chip').forEach(c=>c.classList.toggle('selected',l.days.includes(c.dataset.day)));
+    document.getElementById('edit-modal-lecture').style.display='flex';
+  } else if(type==='exam'){
+    const e=exams.find(x=>x.id===id);if(!e)return;
+    ['ee-name','ee-date','ee-time','ee-dur','ee-chapters','ee-desc'].forEach(id2=>{
+      const k=id2.replace('ee-','');
+      const map={name:'name',date:'date',time:'time',dur:'dur',chapters:'chapters',desc:'desc'};
+      document.getElementById(id2).value=e[map[k]]||'';
+    });
+    document.getElementById('ee-type').value=e.type;
+    selDiff=e.diff||0;
+    document.querySelectorAll('#ee-diff-row .diff-dot').forEach((d,i)=>d.classList.toggle('selected',i+1===selDiff));
+    document.getElementById('ee-diff-label').textContent=selDiff?DL[selDiff]:'';
+    document.getElementById('edit-modal-exam').style.display='flex';
+  } else if(type==='hw'){
+    const h=hws.find(x=>x.id===id);if(!h)return;
+    document.getElementById('eh-name').value=h.name;
+    document.getElementById('eh-type').value=h.type;
+    document.getElementById('eh-date').value=h.date;
+    document.getElementById('eh-time').value=h.time||'';
+    document.getElementById('eh-dur').value=h.dur||'';
+    document.getElementById('eh-chapters').value=h.chapters||'';
+    document.getElementById('eh-desc').value=h.desc||'';
+    selHwDiff=h.diff||0;
+    document.querySelectorAll('#eh-diff-row .diff-dot').forEach((d,i)=>d.classList.toggle('selected',i+1===selHwDiff));
+    document.getElementById('eh-diff-label').textContent=selHwDiff?DL[selHwDiff]:'';
+    document.getElementById('edit-modal-hw').style.display='flex';
+  } else if(type==='note'){
+    const n=notes.find(x=>x.id===id);if(!n)return;
+    document.getElementById('en-title').value=n.title;
+    document.getElementById('en-body').value=n.body;
+    editNoteColor=n.color||'teal';
+    document.querySelectorAll('#en-color-row .color-swatch').forEach(s=>s.classList.toggle('selected',s.dataset.color===editNoteColor));
+    document.getElementById('edit-modal-note').style.display='flex';
+  } else if(type==='lesson'){
+    const l=lessons.find(x=>x.id===id);if(!l)return;
+    document.getElementById('els-subject').value=l.subject;
+    document.getElementById('els-num').value=l.num;
+    document.getElementById('els-chname').value=l.chname||'';
+    document.getElementById('els-title').value=l.title;
+    document.getElementById('els-doc').value=l.doc||'';
+    document.getElementById('els-notes').value=l.notes||'';
+    // populate videos
+    const vc=document.getElementById('els-videos-container');
+    vc.innerHTML='';
+    const vids=l.videos&&l.videos.length?l.videos:[''];
+    vids.forEach((v,i)=>{
+      const div=document.createElement('div');
+      div.className='video-field-row';
+      div.innerHTML=`<span class="video-field-label">Video ${i+1}</span><input type="text" value="${v}" /><button type="button" class="remove-video-btn" onclick="this.parentElement.remove();reindexVideos('els-videos-container')">✕</button>`;
+      vc.appendChild(div);
+    });
+    document.getElementById('edit-modal-lesson').style.display='flex';
+  }
+}
+
+function saveEditLecture(){
+  const name=g('el-name'),start=g('el-start'),end=g('el-end');
+  if(!name||!start||!end||!selDays.length){alert('Please fill course name, times, and select days.');return;}
+  const idx=lectures.findIndex(x=>x.id===editingId);
+  if(idx>-1)lectures[idx]={...lectures[idx],name,start,end,days:[...selDays],room:g('el-room')};
+  sv();closeEditModal('lecture');renderLectures();
+}
+function saveEditExam(){
+  const name=g('ee-name'),date=g('ee-date');
+  if(!name||!date){alert('Fill in course name and date.');return;}
+  const idx=exams.findIndex(x=>x.id===editingId);
+  if(idx>-1)exams[idx]={...exams[idx],name,type:gs('ee-type'),date,time:g('ee-time'),dur:g('ee-dur'),chapters:g('ee-chapters'),desc:g('ee-desc'),diff:selDiff};
+  exams.sort((a,b)=>a.date.localeCompare(b.date));
+  sv();closeEditModal('exam');renderExams();
+}
+function saveEditHw(){
+  const name=g('eh-name'),date=g('eh-date');
+  if(!name||!date){alert('Fill in subject and due date.');return;}
+  const idx=hws.findIndex(x=>x.id===editingId);
+  if(idx>-1)hws[idx]={...hws[idx],name,type:gs('eh-type'),date,time:g('eh-time'),dur:g('eh-dur'),chapters:g('eh-chapters'),desc:g('eh-desc'),diff:selHwDiff};
+  hws.sort((a,b)=>a.date.localeCompare(b.date));
+  sv();closeEditModal('hw');renderHw();
+}
+function saveEditNote(){
+  const idx=notes.findIndex(x=>x.id===editingId);
+  if(idx>-1)notes[idx]={...notes[idx],title:g('en-title')||'Untitled',body:g('en-body'),color:editNoteColor};
+  sv();closeEditModal('note');renderNotes();
+}
+function saveEditLesson(){
+  const subject=document.getElementById('els-subject').value.trim();
+  const title=document.getElementById('els-title').value.trim();
+  if(!subject||!title){alert('Please fill in subject and lesson title.');return;}
+  const idx=lessons.findIndex(x=>x.id===editingId);
+  if(idx>-1){
+    const existingWatched=lessons[idx].watched||{};
+    lessons[idx]={...lessons[idx],subject,
+      num:parseInt(document.getElementById('els-num').value)||lessons[idx].num,
+      chname:document.getElementById('els-chname').value.trim(),
+      title,
+      videos:getVideoLinks('els-videos-container'),
+      doc:document.getElementById('els-doc').value.trim(),
+      notes:document.getElementById('els-notes').value.trim(),
+      watched:existingWatched
+    };
+  }
+  lessons.sort((a,b)=>a.subject.localeCompare(b.subject)||a.num-b.num);
+  sv();closeEditModal('lesson');renderLessons();updateSubjectDatalist();
+}
+
+// ── TODO ──
+function addTodo(){
+  const text=document.getElementById('todo-input').value.trim();
+  if(!text)return;
+  todos.unshift({id:Date.now(),text,done:false});
+  document.getElementById('todo-input').value='';
+  sv();renderTodos();
+}
+function toggleTodo(id){
+  const t=todos.find(x=>x.id===id);if(t)t.done=!t.done;
+  sv();renderTodos();renderToday();
+}
+function deleteTodo(id){
+  todos=todos.filter(x=>x.id!==id);
+  sv();renderTodos();renderToday();
+}
+function filterTodos(f,btn){
+  todoFilter=f;
+  document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTodos();
+}
+
+// ── RENDERS ──
+function renderLectures(){
+  const el=document.getElementById('lecture-list');
+  const s=[...lectures].sort((a,b)=>a.start.localeCompare(b.start));
+  el.innerHTML=s.map(l=>`
+    <div class="card lect">
+      <div class="card-actions">
+        <button class="card-edit" onclick="openEdit('lecture',${l.id})" title="Edit">✏️</button>
+        <button class="card-del" onclick="delItem('lectures',${l.id},renderLectures)" title="Delete">🗑</button>
+      </div>
+      <div class="card-name">${l.name}</div>
+      <div class="lc-time">🕐 ${fmt(l.start)} – ${fmt(l.end)}</div>
+      ${l.room?`<div class="lc-room">📍 ${l.room}</div>`:''}
+      <div class="lc-days">${l.days.map(d=>`<span class="lc-day">${d}</span>`).join('')}</div>
+    </div>`).join('');
+  document.getElementById('lecture-empty').style.display=s.length?'none':'block';
+}
+function renderExams(){
+  const el=document.getElementById('exam-list');
+  el.innerHTML=exams.map(e=>`
+    <div class="card exam-c" style="border-top-color:${e.diff?DC[e.diff]:'var(--teal)'}">
+      <div class="card-actions">
+        <button class="card-edit" onclick="openEdit('exam',${e.id})" title="Edit">✏️</button>
+        <button class="card-del" onclick="delItem('exams',${e.id},renderExams)" title="Delete">🗑</button>
+      </div>
+      <span class="type-badge ${TB[e.type]}">${TL[e.type]}</span>
+      <div class="card-name" style="padding-right:0">${e.name}</div>
+      <div class="ec-meta">
+        <span>📅 ${e.date}</span>${e.time?`<span>🕐 ${fmt(e.time)}</span>`:''}${e.dur?`<span>⏱ ${e.dur}min</span>`:''}
+      </div>
+      ${e.chapters?`<div class="chapters-pill">📌 ${e.chapters}</div>`:''}
+      ${e.desc?`<div class="ec-desc">${e.desc}</div>`:''}
+      ${e.diff?`<div class="diff-badge" style="background:${DC[e.diff]}">${e.diff}</div>`:''}
+    </div>`).join('');
+  document.getElementById('exam-empty').style.display=exams.length?'none':'block';
+}
+function renderHw(){
+  const el=document.getElementById('hw-list');
+  el.innerHTML=hws.map(h=>`
+    <div class="card hw-c" style="border-right-color:${h.diff?DC[h.diff]:'var(--gold)'}">
+      <div class="card-actions">
+        <button class="card-edit" onclick="openEdit('hw',${h.id})" title="Edit">✏️</button>
+        <button class="card-del" onclick="delItem('hws',${h.id},renderHw)" title="Delete">🗑</button>
+      </div>
+      <span class="type-badge ${HB[h.type]||'badge-homework'}">${HL[h.type]||h.type}</span>
+      <div class="card-name" style="padding-right:0">${h.name}</div>
+      <div class="ec-meta">📅 Due: ${h.date}${h.time?' at '+fmt(h.time):''}${h.dur?'  ⏱ ~'+h.dur+'min':''}</div>
+      ${h.chapters?`<div class="chapters-pill">📖 ${h.chapters}</div>`:''}
+      ${h.desc?`<div class="ec-desc">${h.desc}</div>`:''}
+      ${h.diff?`<div class="diff-badge" style="background:${DC[h.diff]}">${h.diff}</div>`:''}
+    </div>`).join('');
+  document.getElementById('hw-empty').style.display=hws.length?'none':'block';
+}
+function renderNotes(){
+  const el=document.getElementById('notes-list');
+  el.innerHTML=notes.map(n=>`
+    <div class="note-card color-${n.color||'teal'}">
+      <div class="card-actions">
+        <button class="card-edit" onclick="openEdit('note',${n.id})" title="Edit">✏️</button>
+        <button class="card-del" onclick="delItem('notes',${n.id},renderNotes)" title="Delete">🗑</button>
+      </div>
+      <div class="note-title">${n.title}</div>
+      <div class="note-body">${n.body}</div>
+      <div class="note-date">${n.date||''}</div>
+    </div>`).join('');
+  document.getElementById('notes-empty').style.display=notes.length?'none':'block';
+}
+function renderTodos(){
+  const el=document.getElementById('todo-list');
+  let filtered=todos;
+  if(todoFilter==='active')filtered=todos.filter(t=>!t.done);
+  else if(todoFilter==='done')filtered=todos.filter(t=>t.done);
+  if(!filtered.length){el.innerHTML='';document.getElementById('todo-empty').style.display='block';return;}
+  document.getElementById('todo-empty').style.display='none';
+  const active=filtered.filter(t=>!t.done);
+  const done=filtered.filter(t=>t.done);
+  let html='';
+  if(active.length){
+    active.forEach(t=>{html+=todoItemHTML(t);});
+  }
+  if(done.length){
+    if(active.length) html+=`<div class="todo-section-header">Completed</div>`;
+    done.forEach(t=>{html+=todoItemHTML(t);});
+  }
+  el.innerHTML=html;
+}
+function todoItemHTML(t){
+  return`<div class="todo-item${t.done?' done':''}">
+    <div class="todo-cb${t.done?' checked':''}" onclick="toggleTodo(${t.id})"></div>
+    <span class="ti-text">${t.text}</span>
+    <button class="todo-del-btn" onclick="deleteTodo(${t.id})">🗑</button>
+  </div>`;
+}
+function renderTimetable(){
+  const body=document.getElementById('tt-body');
+  if(!lectures.length){body.innerHTML='';document.getElementById('tt-empty').style.display='block';return;}
+  document.getElementById('tt-empty').style.display='none';
+  const days=['Sun','Mon','Tue','Wed','Thu'];
+  let rows='';
+  for(let h=7;h<=22;h++){
+    const label=`${h<10?'0'+h:h}:00`;
+    const cells=days.map(day=>{
+      const m=lectures.filter(l=>l.days.includes(day)&&parseInt(l.start)===h);
+      return`<td style="border:1px solid rgba(8,145,178,.1);padding:4px;background:white;vertical-align:top;min-width:90px;">${m.map(l=>`<div style="background:linear-gradient(135deg,var(--teal-dark),var(--teal));color:white;border-radius:7px;padding:4px 7px;font-size:.7rem;font-weight:600;margin:2px;"><strong style="display:block;font-size:.72rem;">${l.name}</strong>${fmt(l.start)}–${fmt(l.end)}</div>`).join('')}</td>`;
+    }).join('');
+    rows+=`<tr><td style="background:linear-gradient(180deg,var(--teal-ghost),#e7fafd);font-size:.72rem;font-weight:700;color:var(--teal-dark);text-align:center;white-space:nowrap;padding:8px 12px;border:1px solid rgba(8,145,178,.1);vertical-align:middle;">${label}</td>${cells}</tr>`;
+  }
+  body.innerHTML=rows;
+}
+
+function toggleWatched(lessonId,vidIdx){
+  const l=lessons.find(x=>x.id===lessonId);if(!l)return;
+  if(!l.watched)l.watched={};
+  const key='v'+vidIdx;
+  l.watched[key]=!l.watched[key];
+  sv();renderLessons();
+}
+function renderLessons(){
+  const content=document.getElementById('lessons-content');
+  const empty=document.getElementById('lessons-empty');
+  const filterEl=document.getElementById('subject-filter');
+  const searchVal=(document.getElementById('lesson-search')?.value||'').toLowerCase().trim();
+
+  if(!lessons.length){content.innerHTML='';empty.style.display='block';filterEl.innerHTML='';return;}
+  empty.style.display='none';
+
+  const subjects=[...new Set(lessons.map(l=>l.subject))].sort();
+
+  filterEl.innerHTML=`<div class="sf-chip${lessonSubjectFilter==='all'?' active':''}" onclick="setLessonFilter('all',this)">All</div>`+
+    subjects.map(s=>`<div class="sf-chip${lessonSubjectFilter===s?' active':''}" onclick="setLessonFilter(${JSON.stringify(s)},this)">${s}</div>`).join('');
+
+  let filtered=lessons;
+  if(lessonSubjectFilter!=='all') filtered=filtered.filter(l=>l.subject===lessonSubjectFilter);
+  if(searchVal) filtered=filtered.filter(l=>l.subject.toLowerCase().includes(searchVal)||l.title.toLowerCase().includes(searchVal)||(l.chname||'').toLowerCase().includes(searchVal));
+
+  if(!filtered.length){content.innerHTML=`<div class="empty-state"><div class="ei">🔍</div><p>No lessons match your search.</p></div>`;return;}
+
+  const filteredSubjects=[...new Set(filtered.map(l=>l.subject))].sort();
+  content.innerHTML=filteredSubjects.map(subj=>{
+    const subjLessons=filtered.filter(l=>l.subject===subj).sort((a,b)=>a.num-b.num);
+    return`<div class="lessons-subject-block">
+      <div class="subject-block-header">
+        <div class="subject-block-title">📚 ${subj}</div>
+        <span class="subject-lesson-count">${subjLessons.length} lesson${subjLessons.length!==1?'s':''}</span>
+      </div>
+      ${subjLessons.map(l=>{
+        const vids=l.videos&&l.videos.length?l.videos.filter(Boolean):[];
+        const allWatched=vids.length>0&&vids.every((_,i)=>l.watched&&l.watched['v'+i]);
+        return`<div class="lesson-card${allWatched?' all-watched':''}">
+          <div class="card-actions">
+            <button class="card-edit" onclick="openEdit('lesson',${l.id})">✏️</button>
+            <button class="card-del" onclick="delItem('lessons',${l.id},renderLessons)">🗑</button>
+          </div>
+          <div class="lesson-header">
+            <div class="lesson-chapter-badge">Ch ${l.num}${l.chname?' · '+l.chname:''}</div>
+            <div class="lesson-title-block">
+              <div class="lesson-title">${l.title}</div>
+              ${allWatched?'<div style="font-size:.7rem;color:#16a34a;font-weight:700;">✓ All videos watched</div>':''}
+            </div>
+          </div>
+          ${vids.length?`<div class="video-list">${vids.map((v,i)=>`
+            <div class="video-row">
+              <a href="${v}" target="_blank" class="video-open-btn">▶ Video ${vids.length>1?i+1:''}</a>
+              <button class="watched-toggle${l.watched&&l.watched['v'+i]?' watched':''}" onclick="toggleWatched(${l.id},${i})">
+                ${l.watched&&l.watched['v'+i]?'Watched':'Not watched'}
+              </button>
+            </div>`).join('')}</div>`:''}
+          ${l.doc?`<a href="${l.doc}" target="_blank" class="lesson-doc-btn">📄 Document / Slides</a>`:''}
+          ${l.notes?`<div class="lesson-notes-text">📝 ${l.notes}</div>`:''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+function setLessonFilter(subj,el){
+  lessonSubjectFilter=subj;
+  document.querySelectorAll('.sf-chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  renderLessons();
+}
+function updateSubjectDatalist(){
+  const dl=document.getElementById('ls-subject-list');
+  if(!dl)return;
+  const subjects=[...new Set(lessons.map(l=>l.subject))].sort();
+  dl.innerHTML=subjects.map(s=>`<option value="${s}">`).join('');
+}
+function renderAll(){renderLectures();renderExams();renderHw();renderNotes();renderTodos();renderLessons();updateSubjectDatalist();}
+
+// ── UTILS ──
+function g(id){const e=document.getElementById(id);return e?e.value.trim():'';}
+function gs(id){const e=document.getElementById(id);return e?e.value:'';}
+function fmt(t){if(!t)return '';const[h,m]=t.split(':').map(Number);return`${h%12||12}:${String(m).padStart(2,'0')} ${h>=12?'PM':'AM'}`;}
+// ── SAVE & DELETE ──
+// sv() is defined in Firebase script above (window.sv = ...)
+function delItem(k,id,fn){
+  if(k==='lectures')lectures=lectures.filter(x=>x.id!==id);
+  else if(k==='exams')exams=exams.filter(x=>x.id!==id);
+  else if(k==='hws')hws=hws.filter(x=>x.id!==id);
+  else if(k==='lessons')lessons=lessons.filter(x=>x.id!==id);
+  else if(k==='notes')notes=notes.filter(x=>x.id!==id);
+  else if(k==='todos')todos=todos.filter(x=>x.id!==id);
+  sv();fn();
+}
+
+// close modals on backdrop
+document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.style.display='none';}));
+
+// init date
+setTodayBanner();setTopbarDate();
+</script>
+</body>
+</html>
